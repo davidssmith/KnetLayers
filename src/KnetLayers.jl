@@ -2,8 +2,9 @@
 module KnetLayers
 
 using Knet
-using Augmentor
 using UnicodePlots
+using Random
+using Distributed
 
 import Base.+, Base.*, Base.==
 
@@ -252,14 +253,14 @@ end
 function +(A::Array{Layer,1}, B::Array{Layer,1})
     m = length(A)
     n = length(B)
-    C = Array{Layer}(m+n)
+    C = Array{Layer}(undef, m+n)
     C[1:m] = copy(A)
     C[m+1:m+n] = copy(B)
     return C
 end
 +(A::NeuralNet, B::NeuralNet) = NeuralNet(A.layers + B.layers)
 function *(n::Int, L::Layer)
-    A = Array{Layer}(n)
+    A = Array{Layer}(undef, n)
     for i in 1:n
         A[i] = L
     end
@@ -267,9 +268,9 @@ function *(n::Int, L::Layer)
 end
 function *(n::Int, A::Array{Layer,1})
     m = n*length(A)
-    B = Array{Layer}(m)
+    B = Array{Layer}(undef, m)
     for i in 1:m
-        info(i, " <- ", (i-1)%length(A)+1)
+        @info "$i <- $((i-1)%length(A)+1)"
         B[i] = A[(i-1) % length(A) + 1]
     end
     return B
@@ -308,10 +309,10 @@ end
 function dimflow(A::NeuralNet, indims)
     n = zeros(depth(A)+1)
     D = indims
-    info(D)
+    @info D
     for L in A.layers
         D = outdims(L, D)
-        info("$L -> $D")
+        @info "$L -> $D"
     end
 end
 function flops(A::NeuralNet, indims::NTuple{4,Int})
@@ -360,13 +361,13 @@ end
 # TRAINING AND DATA LOADING HELPERS
 #
 
-include(Pkg.dir("Knet","data","mnist.jl"))
+include("mnist.jl")
 
 xtrn, ytrn, xtst, ytst = mnist()
 
 function train(net::NeuralNet; epochs=10, fast=true, lr=0.001, seed=0xc0ffee,
     optfunc=Adam, ftrain=1.0, atype=KnetArray{Float32})
-    srand(seed)
+    Random.seed!(seed)
     gpuid = 0
     if gpu() >= 0 && atype == KnetArray{Float32}
         gpuid = myid() % Knet.gpuCount()
@@ -378,8 +379,7 @@ function train(net::NeuralNet; epochs=10, fast=true, lr=0.001, seed=0xc0ffee,
         atype = Array{Float32}
     end
     #infoprefix="$(gethostname())$(myid())$device: "
-    infoprefix="INFO: "
-    info("received $net", prefix=infoprefix)
+    @info "received $net"
     batchsize = 100
     Ntrain = round(Int, size(xtrn,4)*ftrain)
     dtrn = minibatch(xtrn[:,:,1,1:Ntrain], ytrn[1:Ntrain], batchsize; xtype=atype)  # keep this on CPU for Augmentor
@@ -391,15 +391,17 @@ function train(net::NeuralNet; epochs=10, fast=true, lr=0.001, seed=0xc0ffee,
     predict = operator(net)
     loss(w, x, ygold) = nll(predict(w, x), ygold)
     lossgradient = grad(loss)
-    params = Array{Any}(length(w))
+    params = Array{Any}(undef, length(w))
     for k in 1:length(w)
         params[k] = optfunc(lr=lr)
     end
 
-    fast || info("epoch 0: ",accuracy(w,dtst,predict))
+    if !fast 
+        @info "epoch 0: $(accuracy(w,dtst,predict))"
+    end
     xaug = zeros(Float32, nx, ny, 1, batchsize)
     accvtime = zeros(epochs)
-    tic()
+    traintime = time()
     for epoch in 1:epochs
         for (x, y) in dtrn
             #x = xtmp
@@ -411,17 +413,17 @@ function train(net::NeuralNet; epochs=10, fast=true, lr=0.001, seed=0xc0ffee,
         end
         if !fast
             accvtime[epoch] = accuracy(w,dtst,predict)
-            info("epoch $epoch: ",accvtime[epoch],prefix=infoprefix)
+            @info "epoch $epoch: $(accvtime[epoch])"
         end
     end
     if gpu() >= 0
         Knet.cudaDeviceSynchronize()
     end
-    traintime = toq()
+    traintime = time() - traintime
     testacc = accuracy(w, dtst, predict)
-    info("Test accuracy = $testacc, training time = $traintime", prefix=infoprefix)
+    @info "Test accuracy = $testacc, training time = $traintime"
     if !fast
-        info("Accuracy vs Epoch:")
+        @info "Accuracy vs Epoch:"
         println(lineplot(accvtime, color=:green))
     end
     return (testacc, traintime, np)
@@ -441,8 +443,8 @@ mnist_lenet = NeuralNet(Layer[
     ])
 
 function test(net::NeuralNet = mnist_lenet; kwargs...)
-    show(STDOUT, "text/plain", net)
-    println()
+    #show(STDOUT, "text/plain", net)
+    println(net)
     acc, t = train(net; kwargs...)
 end
 
