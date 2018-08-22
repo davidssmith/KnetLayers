@@ -444,7 +444,6 @@ mnist_lenet = NeuralNet(Layer[
 
 function test(net::NeuralNet = mnist_lenet; kwargs...)
     #show(STDOUT, "text/plain", net)
-    println(net)
     acc, t = train(net; kwargs...)
 end
 
@@ -454,5 +453,6 @@ end
 
 if PROGRAM_FILE == "KnetLayers.jl"
     #KnetLayers.dimflow(KnetLayers.mnist_lenet,(28,28,1,1))
+    KnetLayers.test(KnetLayers.mnist_mlp, fast=false)
     KnetLayers.test(KnetLayers.mnist_lenet, fast=false)
 end
